@@ -1,0 +1,509 @@
+<!--
+    VULNERABILITY: Information Disclosure & Stored XSS
+    Concept (Information Disclosure): The dashboard displays a significant amount of sensitive system information, including
+                                     OS details, network configuration (IP address), CPU, memory, and running processes.
+                                     This information is available to any authenticated user, not just administrators.
+                                     Such detailed information can be highly valuable for an attacker planning further exploits.
+    Concept (Stored XSS): The data rendered in the user table (u.firstname, u.lastname, u.email, etc.) and system info
+                            (sys_info.hostname, etc.) is directly output to the HTML. If an attacker can control these values
+                            (e.g., by creating a user with a malicious name like `<script>alert('XSS')</script>`), the script
+                            will execute in the browser of any admin viewing the dashboard. Jinja2's auto-escaping provides
+                            a good layer of defense, but it's crucial to be aware of the risk, especially if any data is
+                            ever marked as `|safe`.
+    Enumeration: An attacker with a low-privileged user account can log in and view the dashboard to gather intelligence
+                 about the server environment. For XSS, an attacker could try to register with a name or email containing
+                 a JavaScript payload and see if it executes when an admin views the user list.
+    Fix (Information Disclosure): Access to detailed system information should be restricted to administrative roles.
+                                The backend should check the user's role before sending this data to the template.
+                                Different views can be rendered based on the user's privilege level.
+    Fix (Stored XSS): Ensure Jinja2's auto-escaping is always active. Avoid using the `|safe` filter on any user-controllable
+                      or system-derived data that could be manipulated. Explicitly escape data where necessary using `|e`.
+-->
+<!--
+    VULNERABILITY: Cross-Site Request Forgery (CSRF)
+    Concept: The forms for removing a user and changing a user's role are submitted via POST requests but lack CSRF tokens.
+             An attacker could craft a malicious webpage that, when visited by a logged-in admin, automatically sends a
+             request to remove a user or change their role without the admin's knowledge or consent.
+    Enumeration: Create an HTML page with a hidden form that targets the `/admin/remove_user/<user_id>` endpoint.
+                 The form can be submitted automatically using JavaScript. If a logged-in admin visits this page,
+                 the targeted user will be removed.
+    Fix: Implement anti-CSRF tokens. Generate a unique, unpredictable token for each user session. Include this token
+         as a hidden field in all state-changing forms. On the server side, validate that the token submitted with
+         the request matches the one stored in the user's session. Flask-WTF or other libraries can help automate this.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EDR Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; color: #343a40; margin: 0; }
+        .header { background-color: #343a40; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { margin: 0; }
+        .header a { color: #ffc107; text-decoration: none; }
+        .container { padding: 2rem; }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem; }
+        .card { background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }
+        .card-header { background-color: #007bff; color: white; padding: 1rem; font-weight: bold; }
+        .card-body { padding: 1rem; }
+        .info-item { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+        .info-item:last-child { border-bottom: none; }
+        .info-item strong { color: #555; }
+        .processes-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        .processes-table th, .processes-table td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+        .processes-table th { background-color: #f2f2f2; }
+        #chatboxBtn { position: fixed; bottom: 30px; right: 30px; z-index: 1000; background: #007bff; color: #fff; border: none; border-radius: 50%; width: 60px; height: 60px; font-size: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.2); cursor: pointer; }
+        #chatModal { display: none; position: fixed; bottom: 100px; right: 30px; width: 350px; max-width: 90vw; height: 500px; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); z-index: 2000; flex-direction: column; overflow: hidden; }
+        #chatModal.active { display: flex; }
+        .chat-header { background: #007bff; color: #fff; padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
+        .chat-users { background: #f2f2f2; padding: 0.5rem; max-height: 100px; overflow-y: auto; border-bottom: 1px solid #ddd; }
+        .chat-users-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+        .chat-users-list li { padding: 0.5rem; cursor: pointer; border-radius: 4px; }
+        .chat-users-list li:hover, .chat-users-list li.active { background: #e0e7ff; }
+        .chat-messages { flex: 1; padding: 1rem; overflow-y: auto; background: #f9f9f9; display: flex; flex-direction: column; }
+        .chat-message { margin-bottom: 0.5rem; max-width: 80%; padding: 0.5rem 1rem; border-radius: 16px; }
+        .chat-message.sent { background: #007bff; color: #fff; align-self: flex-end; }
+        .chat-message.received { background: #e9ecef; color: #333; align-self: flex-start; }
+        .chat-input-area { display: flex; border-top: 1px solid #ddd; }
+        .chat-input { flex: 1; padding: 0.75rem; border: none; border-radius: 0; font-size: 1rem; }
+        .chat-send-btn { background: #007bff; color: #fff; border: none; padding: 0 1.5rem; font-size: 1.2rem; cursor: pointer; }
+        .admin-panel-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        .admin-panel-table th, .admin-panel-table td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+        .admin-panel-table th { background-color: #ffe0e0; }
+        .admin-panel-table .action-btn { margin-right: 0.5rem; padding: 5px 10px; border: none; border-radius: 4px; cursor: pointer; color: white; }
+        .action-btn.remove-btn { background-color: #dc3545; }
+        .action-btn.remove-btn:hover { background-color: #c82333; }
+        .action-btn.role-btn { background-color: #28a745; }
+        .action-btn.role-btn:hover { background-color: #218838; }
+        .action-btn.chat-btn { background-color: #007bff; }
+        .action-btn.chat-btn:hover { background-color: #0069d9; }
+        .admin-panel { display: none; margin-bottom: 2rem; } /* Hide by default */
+        .admin-panel.visible { display: block; } /* Show when toggled */
+        .broadcast-btn { background: #c82333; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; }
+        .broadcast-btn:hover { background: #b52a37; }
+        .view-log-btn { background: #6c757d; color: white; padding: 0.5rem 1rem; border-radius: 4px; text-decoration: none; display: inline-block; vertical-align: middle; }
+        .view-log-btn:hover { background: #5a6268; }
+        .sys-info-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        /* Styles for the permission denied notification */
+        #permission-denied { position: fixed; bottom: -100px; left: 50%; transform: translateX(-50%); background-color: #dc3545; color: white; padding: 1rem 2rem; border-radius: 8px; z-index: 3000; transition: bottom 0.5s ease-in-out; }
+        #permission-denied.show { bottom: 30px; }
+        .role-dropdown { display: inline-block; position: relative; }
+        .role-options { display: none; position: absolute; background-color: white; box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); z-index: 1; min-width: 120px; border-radius: 4px; }
+        .role-options a { color: black; padding: 12px 16px; text-decoration: none; display: block; border-bottom: 1px solid #ddd; }
+        .role-options a:last-child { border-bottom: none; }
+        .role-options a:hover { background-color: #f1f1f1; }
+        .form-inline { display: inline; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>EDR Dashboard</h1>
+        <div>
+            <span>Logged in as: {{ session.user_email }}</span>
+            <a href="{{ url_for('auth.logout') }}" style="margin-left: 15px;">Logout</a>
+            <a href="#" id="adminPanelBtn" style="margin-left: 15px;">Admin Panel</a>
+        </div>
+    </div>
+
+    <div class="container">
+        {% if session.user_role == 'admin' %}
+        <div class="admin-panel card" id="adminPanel">
+            <div class="card-header">Admin Panel - User Monitoring</div>
+            <div class="card-body">
+                <div style="margin-bottom: 1rem;">
+                    <button class="broadcast-btn" onclick="openBroadcastModal()">Send Message to All Users</button>
+                    <a href="{{ url_for('admin.audit_log_page') }}" class="view-log-btn" style="margin-left: 1rem;">View Full Audit Log</a>
+                </div>
+                <table class="admin-panel-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Role</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in users %}
+                        <tr>
+                            <td>{{ u.id }}</td>
+                            <td>{{ u.firstname }} {{ u.lastname }}</td>
+                            <td>{{ u.email }}</td>
+                            <td>{{ u.phone }}</td>
+                            <td>{{ u.role }}</td>
+                            <td>
+                                <form method="post" action="/admin/remove_user/{{ u.id }}" class="form-inline" onsubmit="return confirm('Are you sure you want to remove this user?');">
+                                    <!-- VULNERABILITY: CSRF - The form lacks a CSRF token. -->
+                                    <!-- An attacker could trick an admin into submitting this form. -->
+                                    <button type="submit" class="action-btn remove-btn">Remove</button>
+                                </form>
+                                <div class="role-dropdown">
+                                    <button onclick="showRoleOptions({{ u.id }}, event)" class="action-btn role-btn">Manage Role</button>
+                                    <div id="roleOptions-{{ u.id }}" class="role-options">
+                                        <a href="#" onclick="setUserRole({{ u.id }}, 'admin'); return false;">Set as Admin</a>
+                                        <a href="#" onclick="setUserRole({{ u.id }}, 'user'); return false;">Set as User</a>
+                                    </div>
+                                </div>
+                                <button onclick="openChatWithUser({{ u.id }}, '{{ u.firstname }} {{ u.lastname }}')" class="action-btn chat-btn">Chat</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="grid-container">
+            <!-- System Information Card -->
+            <div class="card">
+                <div class="card-header">System Information</div>
+                <div class="card-body">
+                                        <!-- VULNERABILITY: Information Disclosure. Sensitive info displayed to all users. -->
+                    <!-- VULNERABILITY: Potential Stored XSS if hostname, IP, or OS info can be manipulated. -->
+                    <div class="info-item"><strong>Hostname:</strong> <span>{{ sys_info.hostname | e }}</span></div>
+                    <div class="info-item"><strong>IP Address:</strong> <span>{{ sys_info.ip_address | e }}</span></div>
+                    <div class="info-item"><strong>OS:</strong> <span>{{ sys_info.os | e }}</span></div>
+                    <div class="info-item"><strong>OS Release:</strong> <span>{{ sys_info.os_release }}</span></div>
+                    <div class="info-item"><strong>OS Version:</strong> <span>{{ sys_info.os_version }}</span></div>
+                    <div class="info-item"><strong>Architecture:</strong> <span>{{ sys_info.architecture }}</span></div>
+                </div>
+            </div>
+            <!-- CPU & Memory Card -->
+            <div class="card">
+                <div class="card-header">CPU & Memory</div>
+                <div class="card-body">
+                    <div class="info-item"><strong>Processor:</strong> <span>{{ sys_info.processor }}</span></div>
+                    <div class="info-item"><strong>Physical Cores:</strong> <span>{{ sys_info.cpu_cores }}</span></div>
+                    <div class="info-item"><strong>Total Cores:</strong> <span>{{ sys_info.cpu_total_cores }}</span></div>
+                    <div class="info-item"><strong>CPU Usage:</strong> <span>{{ sys_info.cpu_usage }}%</span></div>
+                    <div class="info-item"><strong>Total RAM:</strong> <span>{{ sys_info.ram_total }} GB</span></div>
+                    <div class="info-item"><strong>Available RAM:</strong> <span>{{ sys_info.ram_available }} GB</span></div>
+                    <div class="info-item"><strong>RAM Usage:</strong> <span>{{ sys_info.ram_percent }}%</span></div>
+                </div>
+            </div>
+            <!-- Disk Usage Card -->
+            <div class="card">
+                <div class="card-header">Disk Usage</div>
+                <div class="card-body">
+                    <div class="info-item"><strong>Total Disk:</strong> <span>{{ sys_info.disk_total }} GB</span></div>
+                    <div class="info-item"><strong>Used Disk:</strong> <span>{{ sys_info.disk_used }} GB</span></div>
+                    <div class="info-item"><strong>Free Disk:</strong> <span>{{ sys_info.disk_free }} GB</span></div>
+                    <div class="info-item"><strong>Disk Usage:</strong> <span>{{ sys_info.disk_percent }}%</span></div>
+                </div>
+            </div>
+            <!-- Running Processes Card -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-header">Running Processes</div>
+                <div class="card-body">
+                    <table class="processes-table">
+                        <thead>
+                            <tr>
+                                <th>PID</th>
+                                <th>Name</th>
+                                <th>CPU %</th>
+                                <th>Memory %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in sys_info.processes %}
+                            <tr>
+                                                                <!-- VULNERABILITY: Potential Stored XSS if process names can be manipulated -->
+                                <td>{{ p.pid }}</td>
+                                <td>{{ p.name | e }}</td>
+                                <td>{{ p.cpu_percent }}</td>
+                                <td>{{ p.memory_percent | round(2) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chatbox Button -->
+    <button id="chatboxBtn" title="Chatbox">💬</button>
+    
+    <!-- Chatbox Modal -->
+    <div id="chatModal">
+        <div class="chat-header">
+            <span>Chatbox</span>
+            <button onclick="closeChatbox()" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;">&times;</button>
+        </div>
+        <div class="chat-users">
+            <ul class="chat-users-list" id="chatUsersList">
+                <!-- User list will be loaded here -->
+            </ul>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <!-- Messages will be loaded here -->
+        </div>
+        <div class="chat-input-area">
+            <input type="text" class="chat-input" id="chatInput" placeholder="Type a message..." autocomplete="off">
+            <button class="chat-send-btn" id="chatSendBtn">Send</button>
+        </div>
+    </div>
+
+    <!-- Broadcast Modal -->
+    <div id="broadcastModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.4); z-index:3000; align-items:center; justify-content:center;">
+        <div style="background:#fff; padding:2rem; border-radius:8px; max-width:400px; margin:auto;">
+            <h3>Send Message to All Users</h3>
+            <textarea id="broadcastMsg" style="width:100%; height:80px;"></textarea>
+            <div style="margin-top:1rem; text-align:right;">
+                <button onclick="sendBroadcast()">Send</button>
+                <button onclick="closeBroadcastModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification element for permission errors -->
+    <div id="permission-denied">Access Denied: Administrator privileges required.</div>
+
+    <script>
+        // --- DYNAMIC DATA SECTION ---
+        const currentUserId = {{ session.user_id | tojson }};
+        const currentUserRole = '{{ session.user_role }}';
+
+        // --- DOM ELEMENT REFERENCES ---
+        const chatboxBtn = document.getElementById('chatboxBtn');
+        const chatModal = document.getElementById('chatModal');
+        const adminPanelBtn = document.getElementById('adminPanelBtn');
+        const adminPanel = document.getElementById('adminPanel');
+        const permissionDeniedMsg = document.getElementById('permission-denied');
+
+        // --- GLOBAL VARIABLES ---
+        let currentChatUserId = null;
+        let pollingInterval = null;
+
+        // --- ADMIN PANEL LOGIC ---
+        adminPanelBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (currentUserRole === 'admin') {
+                adminPanel.classList.toggle('visible');
+            } else {
+                permissionDeniedMsg.classList.add('show');
+                setTimeout(() => {
+                    permissionDeniedMsg.classList.remove('show');
+                }, 3000);
+            }
+        });
+
+        // --- CHATBOX LOGIC ---
+        function openChatbox() { chatModal.classList.add('active'); }
+        function closeChatbox() { 
+            chatModal.classList.remove('active'); 
+            if (pollingInterval) clearInterval(pollingInterval);
+        }
+        chatboxBtn.onclick = () => {
+            openChatbox();
+            loadUsers();
+        };
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users');
+                const data = await response.json();
+                const usersList = document.getElementById('chatUsersList');
+                usersList.innerHTML = '';
+                data.users.forEach(user => {
+                    if (user.id === currentUserId) return;
+                    const li = document.createElement('li');
+                    li.textContent = `${user.name} (${user.email})`;
+                    li.dataset.userid = user.id;
+                    li.onclick = () => selectUser(user.id, li);
+                    usersList.appendChild(li);
+                });
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        function selectUser(userId, liElem) {
+            currentChatUserId = userId;
+            document.querySelectorAll('#chatUsersList li').forEach(li => li.classList.remove('active'));
+            liElem.classList.add('active');
+            loadMessages();
+            if (pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(loadMessages, 5000);
+        }
+
+        async function loadMessages() {
+            if (!currentChatUserId) return;
+            try {
+                const response = await fetch(`/api/messages/${currentChatUserId}`);
+                const data = await response.json();
+                const chatMessages = document.getElementById('chatMessages');
+                chatMessages.innerHTML = '';
+                data.messages.forEach(msg => {
+                    const div = document.createElement('div');
+                    div.classList.add('chat-message', msg.sender_id == currentUserId ? 'sent' : 'received');
+                    div.textContent = msg.message;
+                    chatMessages.appendChild(div);
+                });
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            } catch (error) {
+                console.error('Error loading messages:', error);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message || !currentChatUserId) return;
+            
+            try {
+                const response = await fetch('/api/send_message', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ receiver_id: currentChatUserId, message: message })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    input.value = '';
+                    loadMessages(); // Refresh messages after sending
+                } else {
+                    console.error('Failed to send message:', data.error);
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+            }
+        }
+
+        document.getElementById('chatSendBtn').onclick = sendMessage;
+        document.getElementById('chatInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // --- BROADCAST LOGIC ---
+        function openBroadcastModal() { document.getElementById('broadcastModal').style.display = 'flex'; }
+        function closeBroadcastModal() { document.getElementById('broadcastModal').style.display = 'none'; }
+        async function sendBroadcast() {
+            const msg = document.getElementById('broadcastMsg').value.trim();
+            if (!msg) return;
+            try {
+                await fetch('/api/send_message_all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg })
+                });
+                closeBroadcastModal();
+                alert('Message sent to all users!');
+            } catch (error) {
+                console.error('Error sending broadcast:', error);
+                alert('Failed to send broadcast.');
+            }
+        }
+
+        // --- SYSTEM INFO COLLECTION ---
+        function collectAndSendSystemInfo() {
+            const info = {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                screen: { width: window.screen.width, height: window.screen.height, colorDepth: window.screen.colorDepth },
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            };
+            
+            fetch('/api/user_system_info', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(info)
+            }).catch(error => console.error('Error sending system info:', error));
+        }
+        window.addEventListener('DOMContentLoaded', collectAndSendSystemInfo);
+        
+        // --- ADMIN PANEL CHAT INITIATION ---
+        function openChatWithUser(userId, userName) {
+            openChatbox();
+            loadUsers().then(() => {
+                setTimeout(() => {
+                    const userList = document.getElementById('chatUsersList');
+                    const li = Array.from(userList.children).find(li => li.dataset.userid == userId);
+                    if (li) {
+                        li.click();
+                    } else {
+                        console.warn(`User with ID ${userId} not found in chat list.`);
+                    }
+                }, 100);
+            });
+        }
+        
+        // --- ROLE DROPDOWN FUNCTIONS ---
+        // Close all role option dropdowns when clicking elsewhere on the page
+        document.addEventListener('click', function(event) {
+            const dropdowns = document.querySelectorAll('.role-options');
+            dropdowns.forEach(dropdown => {
+                if (dropdown.style.display === 'block' && !event.target.closest('.role-dropdown')) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        });
+        
+        // Show role options dropdown
+        function showRoleOptions(userId, event) {
+            console.log(`Showing role options for user ID: ${userId}`);
+            const dropdown = document.getElementById(`roleOptions-${userId}`);
+            
+            // Close all other open dropdowns first
+            const allDropdowns = document.querySelectorAll('.role-options');
+            allDropdowns.forEach(d => {
+                if (d.id !== `roleOptions-${userId}`) {
+                    d.style.display = 'none';
+                }
+            });
+            
+            // Toggle this dropdown
+            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+            
+            // Prevent the click from propagating to the document
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            return false;
+        }
+        
+        // Close all dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            const dropdowns = document.querySelectorAll('.role-options');
+            dropdowns.forEach(dropdown => {
+                if (!event.target.closest('.role-dropdown')) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        });
+        
+        // Set user role to a specific value
+        function setUserRole(userId, role) {
+            console.log(`Setting user ID ${userId} to role: ${role}`);
+            if (confirm(`Are you sure you want to set this user's role to ${role}?`)) {
+                console.log(`Sending POST request to /admin/set_role/${userId}`);
+                
+                // Create a form and submit it
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = `/admin/set_role/${userId}`;
+                
+                // Add role as form data
+                const roleInput = document.createElement('input');
+                roleInput.type = 'hidden';
+                roleInput.name = 'role';
+                roleInput.value = role;
+                form.appendChild(roleInput);
+                
+                document.body.appendChild(form);
+                form.submit();
+            }
+            
+            // Hide the dropdown
+            document.getElementById(`roleOptions-${userId}`).style.display = 'none';
+        }
+    </script>
+</body>
+</html>

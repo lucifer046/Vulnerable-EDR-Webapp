@@ -1,0 +1,86 @@
+<!--
+    VULNERABILITY: No CSRF Protection
+    Concept: The admin registration form lacks a CSRF token. An attacker could create a malicious webpage that tricks
+             an existing administrator into submitting this form, unintentionally creating a new admin account with
+             details specified by the attacker. This could lead to a complete compromise of the system if the attacker
+             creates a new admin account for themselves.
+    Enumeration: Create an HTML page with a hidden form that auto-submits to the /admin/register endpoint.
+                 The form would contain pre-filled data for a new admin user. If a logged-in admin (or any user,
+                 depending on the server-side checks) visits this page, a new admin account might be created without
+                 their interaction or consent.
+    Fix: Implement anti-CSRF tokens in the registration form. The server should generate a unique token, embed it in
+         the form, and validate it upon submission to ensure the request is legitimate.
+
+    VULNERABILITY: Lack of Input Validation (Client-Side)
+    Concept: The form relies solely on the `required` attribute for basic validation. It lacks more robust client-side
+             validation for password complexity, email format (beyond the browser's default), and phone number format.
+             This can lead to a poor user experience and the submission of improperly formatted data.
+    Enumeration: Manually input weak passwords (e.g., "123"), invalid email addresses, or non-numeric phone numbers.
+                 Use browser developer tools to remove the `required` attributes and submit the form with missing data.
+    Fix: Add JavaScript-based validation to provide immediate feedback to the user about data requirements, such as
+         password strength (length, character types), valid phone number patterns, etc. This should be in addition
+         to, not a replacement for, server-side validation.
+
+    VULNERABILITY: Open Registration for a Privileged Role
+    Concept: The existence of a publicly accessible admin registration page is a critical security flaw. It allows
+             anyone to create an administrator account, granting them full control over the application. Admin
+             accounts should only be created through a secure, controlled process (e.g., by another super-admin,
+             via a CLI command on the server, or as part of the initial setup).
+    Enumeration: Simply navigate to `/admin/register` in a browser and fill out the form. If the registration is
+                 successful, you have escalated privileges to an admin level.
+    Fix: This endpoint should be removed entirely or heavily restricted. For example, it could require a unique,
+         one-time registration token that is securely provided to the intended user out-of-band. Alternatively, admin
+         creation should be an internal process, not exposed via a public web form.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Registration</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 2rem 0; }
+        .container { background-color: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
+        h2 { text-align: center; color: #333; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.5rem; color: #555; }
+        input { width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 0.75rem; background-color: #dc3545; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+        button:hover { background-color: #b52a37; }
+        .footer-text { text-align: center; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Admin Registration</h2>
+                <!-- VULNERABILITY: The form is missing a CSRF token and the endpoint allows open admin registration. -->
+        <form method="post" action="/admin/register">
+            {{ csrf_token() }}
+            <div class="form-group">
+                <label for="firstname">First Name</label>
+                <input type="text" id="firstname" name="firstname" required>
+            </div>
+            <div class="form-group">
+                <label for="lastname">Last Name</label>
+                <input type="text" id="lastname" name="lastname" required>
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label for="phone">Phone Number</label>
+                <input type="text" id="phone" name="phone">
+            </div>
+            <button type="submit">Register as Admin</button>
+        </form>
+        <div class="footer-text">
+            <p>Already an admin? <a href="/admin/login">Login here</a></p>
+        </div>
+    </div>
+</body>
+</html>

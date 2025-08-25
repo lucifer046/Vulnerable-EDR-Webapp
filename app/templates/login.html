@@ -1,0 +1,147 @@
+<!--
+    VULNERABILITY: Login Cross-Site Request Forgery (CSRF)
+    Concept: The login form does not contain a CSRF token. An attacker can create a malicious website that
+             forwards a user to the login page with the attacker's credentials. If the user is tricked into
+             submitting this form (e.g., through a hidden form that auto-submits), they will be logged into
+             the attacker's account without their knowledge. This is a "login CSRF" attack, which can be used
+             to trick users into performing actions on behalf of the attacker.
+    Enumeration: Create an HTML page with a hidden form that targets the /login endpoint with pre-filled
+                 credentials for an attacker-controlled account. The form can be submitted automatically
+                 using JavaScript. If a victim visits this page, they will be logged into the attacker's account.
+    Fix: Implement anti-CSRF tokens. Use Flask-WTF to generate a unique token and include it as a hidden
+         field in the form using `{{ form.hidden_tag() }}`. The server-side code should then validate this
+         token on form submission using `form.validate_on_submit()`.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Login</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(to right, #6a11cb, #2575fc);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 2rem 0;
+            color: #333;
+        }
+        .container {
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 2.5rem 3rem;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 450px;
+            box-sizing: border-box;
+        }
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 1.8rem;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+        .form-group {
+            margin-bottom: 1.2rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.6rem;
+            color: #555;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        input[type="text"],
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background-color: #f9f9f9;
+        }
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        input[type="password"]:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+            outline: none;
+            background-color: #fff;
+        }
+        button {
+            width: 100%;
+            padding: 0.9rem;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            margin-top: 1.5rem;
+        }
+        button:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .footer-text {
+            text-align: center;
+            margin-top: 1.8rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        .footer-text a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .footer-text a:hover {
+            text-decoration: underline;
+        }
+        .error {
+            color: #dc3545;
+            text-align: center;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>User Login</h2>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <p class="error">{{ messages[0][1] }}</p>
+            {% endif %}
+        {% endwith %}
+        <!-- VULNERABILITY: The form is missing a CSRF token. -->
+        <form method="post" action="{{ url_for('auth.login') }}">
+            <div class="form-group">
+                <label for="email" class="form-label">Email</label>
+                <input type="email" id="email" name="email" class="form-control" required placeholder="Enter your email">
+            </div>
+            <div class="form-group">
+                <label for="password" class="form-label">Password</label>
+                <input type="password" id="password" name="password" class="form-control" required placeholder="Enter your password">
+            </div>
+            <button type="submit">Login</button>
+        </form>
+        <div class="footer-text">
+            <p>Don't have an account? <a href="{{ url_for('auth.register') }}">Register here</a></p>
+        </div>
+    </div>
+</body>
+</html>

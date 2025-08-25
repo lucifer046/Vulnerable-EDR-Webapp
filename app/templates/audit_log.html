@@ -1,0 +1,72 @@
+<!--
+    VULNERABILITY: Stored Cross-Site Scripting (XSS)
+    Concept: The data rendered in the audit log table (log.admin_email, log.action, log.details) is output directly
+             to the HTML without proper escaping or sanitization. If an attacker can control any of these values
+             (e.g., by performing an action that gets logged with malicious content in the details), they can inject
+             arbitrary HTML or JavaScript. This script would then execute in the browser of any admin viewing the
+             audit log page, potentially leading to session hijacking, defacement, or other attacks.
+    Enumeration: An attacker, with an admin account, would perform an action that gets logged. For the 'details',
+                 they would provide a payload like `<script>alert('XSS')</script>`. For example, if they could
+                 manipulate the details of a 'user role set' action, they could inject this script. When another
+                 admin views the audit log, the script would execute.
+    Fix: All dynamic data rendered in the template should be properly escaped. In Jinja2, this is the default
+         behavior. However, if the data were ever marked as `|safe`, it would become vulnerable. The best practice
+         is to ensure autoescaping is enabled and to explicitly escape any data that might contain user-controlled
+         content if there is any doubt. For example, `{{ log.details | e }}` would explicitly escape the content.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Audit Log</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; color: #343a40; margin: 0; }
+        .header { background-color: #343a40; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { margin: 0; }
+        .header a { color: #ffc107; text-decoration: none; }
+        .container { padding: 2rem; }
+        .card { background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }
+        .card-header { background-color: #6c757d; color: white; padding: 1rem; font-weight: bold; }
+        .card-body { padding: 1rem; }
+        .log-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        .log-table th, .log-table td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+        .log-table th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Admin Audit Log</h1>
+        <a href="{{ url_for('dashboard.dashboard') }}">Back to Dashboard</a>
+    </div>
+    <div class="container">
+        <div class="card">
+            <div class="card-header">All Administrative Actions</div>
+            <div class="card-body">
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Admin</th>
+                            <th>Action</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in audit_logs %}
+                        <tr>
+                                                                                                                <td>{{ log.timestamp }}</td>
+                            <td>{{ log.admin_email }}</td>
+                            <td>{{ log.action }}</td>
+                            <td>{{ log.details }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" style="text-align: center;">No admin actions have been logged yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

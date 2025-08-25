@@ -1,0 +1,209 @@
+<!--
+    VULNERABILITY: No CSRF Protection
+    Concept: The registration form lacks a CSRF token. An attacker could create a malicious webpage that tricks a user's
+             browser into submitting this form without their consent, potentially creating spam accounts or registering
+             an account with a known password that the attacker can later use.
+    Enumeration: Craft an HTML page with a hidden, auto-submitting form that posts data to the `/register` endpoint.
+                 If a user visits this page, an account will be created using the data specified by the attacker.
+    Fix: Implement anti-CSRF tokens. Generate a unique token for the user's session and include it as a hidden
+         field in the form. The backend must validate this token before processing the registration.
+-->
+<!--
+    VULNERABILITY: Lack of Input Validation (Client-Side) & Weak Password Policy
+    Concept: The form uses the `required` attribute, which is a very basic form of client-side validation. However,
+             it does not enforce any specific format for names, emails, or phone numbers, nor does it impose any
+             complexity requirements on the password (e.g., length, character types). This validation is easily
+             bypassed by disabling JavaScript or intercepting the request.
+    Enumeration: An attacker can use browser developer tools to remove the `required` attributes or submit the form
+                 programmatically (e.g., with `curl` or Burp Suite) with invalid or malicious data. Weak passwords
+                 like "12345" can be used.
+    Fix: While client-side validation (using JavaScript) can improve user experience, it is not a security measure.
+         All validation must be re-done on the server side. This includes checking for valid email formats, sanitizing
+         names, and enforcing a strong password policy (e.g., using a library like `passlib` to check for length,
+         complexity, and whether the password has appeared in known data breaches).
+-->
+<!--
+    VULNERABILITY: Privilege Escalation (Open Registration for Privileged Role)
+    Concept: The registration form includes a dropdown menu that allows ANYONE to select the 'Admin' role when creating
+             an account. This is a critical security flaw. The backend `auth.py` code currently accepts this role directly
+             from the form data, allowing any user to self-promote to the highest privilege level.
+    Enumeration: Simply select 'Admin' from the dropdown during registration and submit the form. The user will be created
+                 with administrative privileges.
+    Fix: The ability to create administrators should not be part of the public registration form. Administrative accounts
+         should be created through a separate, secure mechanism, such as:
+         1. A command-line script accessible only to a system administrator.
+         2. An existing admin promoting a user through a secure admin panel.
+         The role selection dropdown should be removed from this public form entirely.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Registration</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(to right, #6a11cb, #2575fc);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 2rem 0;
+            color: #333;
+        }
+        .container {
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 2.5rem 3rem;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 450px;
+            box-sizing: border-box;
+        }
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 1.8rem;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+        .form-group {
+            margin-bottom: 1.2rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.6rem;
+            color: #555;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        input[type="email"],
+        input[type="password"],
+        input[type="text"],
+        input[type="tel"],
+        select {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background-color: #f9f9f9;
+        }
+        input[type="email"]:focus,
+        input[type="password"]:focus,
+        input[type="text"]:focus,
+        input[type="tel"]:focus,
+        select:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+            outline: none;
+            background-color: #fff;
+        }
+        button {
+            width: 100%;
+            padding: 0.9rem;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            margin-top: 1.5rem;
+        }
+        button:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .footer-text {
+            text-align: center;
+            margin-top: 1.8rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        .footer-text a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .footer-text a:hover {
+            text-decoration: underline;
+        }
+        .error {
+            color: #dc3545;
+            text-align: center;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        ul.errors {
+            color: #dc3545;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+            padding-left: 1.2rem;
+            list-style-type: disc;
+        }
+        ul.errors li {
+            margin-bottom: 0.2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>User Registration</h2>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <p class="error">{{ messages[0][1] }}</p>
+            {% endif %}
+        {% endwith %}
+        <!-- VULNERABILITY: No CSRF token in the registration form -->
+        <form method="post" action="{{ url_for('auth.register') }}">
+            <div class="form-group">
+                <label for="firstname">First Name</label>
+                <input type="text" id="firstname" name="firstname" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="lastname">Last Name</label>
+                <input type="text" id="lastname" name="lastname" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="confirm">Confirm Password</label>
+                <input type="password" id="confirm" name="confirm" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="phone">Phone Number</label>
+                <input type="tel" id="phone" name="phone" class="form-control">
+            </div>
+            <!-- VULNERABILITY: Privilege Escalation. Allows any user to register as an Admin. -->
+            <div class="form-group">
+                <label for="role">Role</label>
+                <!-- FIX: This entire div should be removed. Role assignment should not be user-controlled. -->
+                <select id="role" name="role" class="form-control">
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <button type="submit">Register</button>
+        </form>
+        <div class="footer-text">
+            <p>Already have an account? <a href="{{ url_for('auth.login') }}">Login here</a></p>
+        </div>
+    </div>
+</body>
+</html>

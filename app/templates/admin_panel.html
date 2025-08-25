@@ -1,0 +1,97 @@
+<!--
+    VULNERABILITY: Cross-Site Request Forgery (CSRF)
+    Concept: The form for removing a user is vulnerable to CSRF because it does not contain a unique, secret token
+             to verify that the request is legitimate. An attacker could craft a malicious webpage that, when visited
+             by a logged-in admin, would automatically submit a request to this endpoint to remove a user without
+             the admin's knowledge or consent.
+    Enumeration:
+    1. Log in as an administrator.
+    2. Create a simple HTML page with a form that mimics the user removal action:
+       <form action="http://127.0.0.1:5000/admin/remove_user/2" method="post">
+         <input type="submit" value="Click me for a surprise!">
+       </form>
+    3. Host this page and trick the admin into visiting it. When the admin clicks the button (or if the form is
+       submitted automatically via JavaScript), the request to remove user with ID 2 will be sent with the admin's
+       session cookie, and the server will process it.
+    Fix: Implement CSRF protection. In Flask, this is commonly done using the Flask-WTF extension or by manually
+         generating a CSRF token on the server, embedding it in a hidden input field in the form, and validating
+         the token on the server side when the form is submitted.
+
+    VULNERABILITY: Stored Cross-Site Scripting (XSS)
+    Concept: The user data (name, email, phone) is rendered directly into the HTML without proper output encoding or
+             sanitization. If an attacker can create a user account with malicious JavaScript in their name or other
+             fields (e.g., `<script>alert('XSS')</script>`), that script will be executed in the browser of any admin
+             who views this admin panel.
+    Enumeration:
+    1. Register a new user with a malicious payload in the first name field, like: `John<script>alert(document.cookie)</script>`.
+    2. Log in as an admin and navigate to the admin panel.
+    3. The script will execute, and an alert box will appear showing the admin's cookie, proving the XSS vulnerability.
+    Fix: Always escape dynamic data rendered in HTML templates. In Jinja2, this can be done by default (it escapes by
+         default) or explicitly using the `|e` filter (e.g., `{{ u['firstname']|e }}`). Ensure auto-escaping is not
+         disabled globally. For data that needs to be rendered as HTML, use a robust HTML sanitization library like
+         Bleach to strip out dangerous tags and attributes.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f8f9fa; color: #343a40; margin: 0; }
+        .header { background-color: #343a40; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { margin: 0; }
+        .header a { color: #ffc107; text-decoration: none; }
+        .container { padding: 2rem; }
+        .card { background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }
+        .card-header { background-color: #dc3545; color: white; padding: 1rem; font-weight: bold; }
+        .card-body { padding: 1rem; }
+        .admin-panel-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        .admin-panel-table th, .admin-panel-table td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+        .admin-panel-table th { background-color: #f2f2f2; }
+        .admin-panel-table td button { margin-right: 0.5rem; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Admin Panel</h1>
+        <a href="{{ url_for('dashboard.dashboard') }}">Back to Dashboard</a>
+    </div>
+    <div class="container">
+        <div class="card">
+            <div class="card-header">User Management</div>
+            <div class="card-body">
+                <table class="admin-panel-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Role</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in users %}
+                        <tr>
+                            <td>{{ u['id'] }}</td>
+                            <td>{{ u['firstname'] }} {{ u['lastname'] }}</td>
+                            <td>{{ u['email'] }}</td>
+                            <td>{{ u['phone'] }}</td>
+                            <td>{{ u['role'] }}</td>
+                            <td>
+                                                                <!-- VULNERABILITY: CSRF - The form lacks a CSRF token. -->
+                                <form method="post" action="{{ url_for('admin.remove_user', user_id=u['id']) }}" onsubmit="return confirm('Are you sure you want to remove this user?');" style="display:inline;">
+                                    <button type="submit">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
