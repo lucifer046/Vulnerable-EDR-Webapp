@@ -1,0 +1,46 @@
+# -----------------------
+# Python
+# -----------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Package build/dist
+build/
+dist/
+*.egg-info/
+
+# -----------------------
+# Logs & Databases
+# -----------------------
+*.log
+*.sqlite3
+*.db
+
+# -----------------------
+# OS / Editor files
+# -----------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# -----------------------
+# Environment / Secrets
+# -----------------------
+.env
+*.env
+
+# -----------------------
+# Node / Frontend (if used)
+# -----------------------
+node_modules/
+npm-debug.log
+yarn-error.log
